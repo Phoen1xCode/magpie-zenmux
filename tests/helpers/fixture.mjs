@@ -1,10 +1,17 @@
 import { createServer } from "node:http";
 import { once } from "node:events";
 
+// Invented 164-character credentials, shared by unit and CLI tests.
+const fixtureKey = (prefix, label = "fixture") => `${prefix}${label}-Aa0_`.padEnd(164, "x");
 export const KEYS = {
-  builder: "sk-ss-v1-builder-fixture",
-  payg: "sk-ai-v1-payg-fixture",
-  management: "sk-mg-v1-management-fixture",
+  builder: fixtureKey("sk-subs-"),
+  payg: fixtureKey("sk-payg-"),
+  management: fixtureKey("sk-mgmt-"),
+};
+export const ROTATED_KEYS = {
+  builder: fixtureKey("sk-subs-", "rotated"),
+  payg: fixtureKey("sk-payg-", "rotated"),
+  management: fixtureKey("sk-mgmt-", "rotated"),
 };
 export const auth = (kind = "builder", managementKey = KEYS.management) => ({
   type: "api",

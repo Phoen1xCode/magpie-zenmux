@@ -19,17 +19,21 @@ One method, **ZenMux API Key (Builder Plan or Pay As You Go)**. The key prefix d
 
 Magpie first asks for an optional Management API Key, then the inference API Key. Both fields are masked. Leave the Management Key blank if you only need model requests.
 
-| Key | Accepted prefixes | Purpose |
+| Key | Prefix | Purpose |
 | --- | --- | --- |
-| Builder Plan | `sk-ss-v1-`, `sk-subs-` | Model requests charged to the subscription's Flows |
-| Pay As You Go | `sk-ai-v1-`, `sk-payg-` | Model requests charged to PAYG funds |
-| Management | `sk-mg-v1-`, `sk-mgmt-` | Read subscription quotas or account balance; never used for inference |
+| Builder Plan (Subscription) | `sk-subs-` | Model requests charged to the subscription's Flows |
+| Pay As You Go | `sk-payg-` | Model requests charged to PAYG funds |
+| Platform Management | `sk-mgmt-` | Read subscription quotas or account balance; never used for inference |
+
+The plugin only accepts these prefixes and requires **164 characters**, including the prefix. Keys are passed through without truncation. Old-format keys are rejected; replace any saved old keys before using this version.
 
 Create keys in the [subscription console](https://zenmux.ai/platform/subscription), [PAYG console](https://zenmux.ai/platform/pay-as-you-go), or [Management console](https://zenmux.ai/platform/management). The Management Key should belong to the same ZenMux account as the inference key.
 
 Magpie keeps the inference key in the account's `key` field and the Management Key in its metadata in `plugin-auth.json`. The plugin does not borrow another account's Management Key or read one from an environment variable. Saving a key is not a remote authentication check.
 
 Run `magpie plugin login zenmux` again to add another account. Builder and PAYG accounts share one provider and the same model IDs.
+
+To migrate, create replacement keys and sign in with them. Disable the old account in Magpie so requests use the replacement. Verify model requests and, if configured, quota or balance reads, then revoke the old keys in ZenMux once no other apps use them. Updating the plugin does not rotate saved keys.
 
 ## Models
 

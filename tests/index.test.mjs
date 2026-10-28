@@ -10,6 +10,7 @@ import {
   fixture,
   auth,
   KEYS,
+  ROTATED_KEYS,
   model,
   detail,
   deferred,
@@ -62,13 +63,13 @@ for (const kind of ["builder", "payg"]) {
     assert.equal(method.type, "api");
     assert.equal(method.keyless, undefined);
     assert.equal(method.authorize, undefined);
-    for (const plan of Object.values(PLANS))
-      assert.ok(method.placeholder.includes(plan.prefixes[0]));
+    assert.equal(method.placeholder, "sk-subs-... or sk-payg-...");
+    assert.equal(method.prompts[0].placeholder, "sk-mgmt-...");
     assert.deepEqual(
       method.prompts.map((p) => [p.type, p.key]),
       [["password", "managementKey"]],
     );
-    for (const value of [undefined, "", "   ", KEYS.management, "sk-mgmt-fixture"]) {
+    for (const value of [undefined, "", "   ", KEYS.management]) {
       assert.equal(method.prompts[0].validate(value), undefined);
     }
     assert.match(method.prompts[0].validate(KEYS[kind]), /Management API Key/);
@@ -130,13 +131,64 @@ for (const kind of ["builder", "payg"]) {
   });
 }
 
+test("accepts full 164-character keys without truncation and keeps purposes separate", () => {
+  for (const keys of [KEYS, ROTATED_KEYS]) {
+    for (const key of Object.values(keys)) assert.equal(key.length, 164);
+    for (const kind of ["builder", "payg"]) {
+      const credential = { type: "api", key: `  ${keys[kind]}\n` };
+      assert.equal(inferenceKey(credential), keys[kind]);
+      assert.equal(billingPlan(credential), PLANS[kind]);
+      assert.throws(() => managementKey(keys[kind]));
+    }
+    assert.equal(managementKey(`  ${keys.management}\n`), keys.management);
+    assert.throws(() => inferenceKey({ type: "api", key: keys.management }), {
+      signIn: "expired",
+    });
+  }
+});
+
+test("rejects all legacy prefixes even at the new key length before sending requests", async (t) => {
+  const f = await setup(t);
+  for (const prefix of ["sk-ss-v1-", "sk-ai-v1-", "sk-mg-v1-"]) {
+    for (const length of [73, 164]) {
+      const key = `${prefix}fixture`.padEnd(length, "x");
+      const credential = { type: "api", key };
+      assert.throws(() => inferenceKey(credential), { signIn: "expired" });
+      assert.throws(() => billingPlan(credential), { signIn: "expired" });
+      assert.throws(() => managementKey(key), /sk-mgmt-/);
+      assert.match(f.plugin.auth.methods[0].prompts[0].validate(key), /sk-mgmt-/);
+      await assert.rejects(() => f.plugin.auth.loader(async () => credential), {
+        signIn: "expired",
+      });
+      const card = await f.plugin.auth.usage(async () => auth("builder", key));
+      assert.equal(card.signIn, "kept");
+      assert.match(card.error, /sk-mgmt-/);
+    }
+  }
+  assert.equal(f.state.calls.length, 0);
+});
+
+test("rejects new-prefix keys that are not exactly 164 characters long", () => {
+  for (const length of [73, 163, 165]) {
+    for (const kind of ["builder", "payg"]) {
+      const key = KEYS[kind].slice(0, length).padEnd(length, "x");
+      assert.throws(() => inferenceKey({ type: "api", key }), {
+        signIn: "expired",
+        message: /164-character/,
+      });
+    }
+    const key = KEYS.management.slice(0, length).padEnd(length, "x");
+    assert.throws(() => managementKey(key), /164-character/);
+  }
+});
+
 test("key validation accepts both billing modes and rejects malformed or management keys", () => {
   for (const kind of ["builder", "payg"]) {
     for (const key of [
       KEYS.management,
       "sk-mgmt-fixture",
-      "sk-ss-v1-",
-      "sk-ai-v1-",
+      "sk-subs-",
+      "sk-payg-",
       123,
       null,
       KEYS[kind] + "\r\nheader",
@@ -144,18 +196,16 @@ test("key validation accepts both billing modes and rejects malformed or managem
       assert.throws(() => inferenceKey({ type: "api", key }), { signIn: "expired" });
       assert.throws(() => billingPlan({ type: "api", key }), { signIn: "expired" });
     }
-    for (const prefix of PLANS[kind].prefixes) {
-      const credential = {
-        type: "api",
-        key: ` ${prefix}fixture `,
-        metadata: { billingMode: "ignored-legacy-value" },
-      };
-      assert.equal(inferenceKey(credential), prefix + "fixture");
-      assert.equal(billingPlan(credential), PLANS[kind]);
-    }
+    const credential = {
+      type: "api",
+      key: ` ${KEYS[kind]} `,
+      metadata: { billingMode: "ignored-value" },
+    };
+    assert.equal(inferenceKey(credential), KEYS[kind]);
+    assert.equal(billingPlan(credential), PLANS[kind]);
   }
   assert.throws(() => inferenceKey({ type: "oauth", key: KEYS.builder }));
-  for (const key of [KEYS.builder, KEYS.payg, "sk-mg-v1-", {}, "sk-random-fixture"])
+  for (const key of [KEYS.builder, KEYS.payg, "sk-mgmt-", {}, "sk-random-fixture"])
     assert.throws(() => managementKey(key));
 });
 
@@ -383,7 +433,7 @@ test("reads the current auth before each request without pinning a billing mode"
   const f = await setup(t);
   let current = auth();
   const loader = await f.plugin.auth.loader(async () => current);
-  current = { ...current, key: "sk-ss-v1-rotated-fixture" };
+  current = { ...current, key: ROTATED_KEYS.builder };
   const request = () =>
     loader.fetch(f.origin + "/api/anthropic/v1/messages", {
       method: "POST",
@@ -398,6 +448,42 @@ test("reads the current auth before each request without pinning a billing mode"
   await assert.rejects(request, { signIn: "expired" });
   assert.equal(inferenceCalls(f.state).length, 2);
 });
+
+for (const kind of ["builder", "payg"]) {
+  test(`${kind}: rotates 164-character inference and management keys without reloading`, async (t) => {
+    const f = await setup(t);
+    let current = auth(kind);
+    const loader = await f.plugin.auth.loader(async () => current);
+    for (const keys of [KEYS, ROTATED_KEYS]) {
+      current = { ...auth(kind, keys.management), key: keys[kind] };
+      for (const [id, path, header, value] of [
+        ["anthropic/claude-fixture", "/api/anthropic/v1/messages", "x-api-key", keys[kind]],
+        ["openai/gpt-fixture", "/api/v1/responses", "authorization", `Bearer ${keys[kind]}`],
+      ]) {
+        const response = await loader.fetch(f.origin + path, {
+          method: "POST",
+          body: JSON.stringify({ model: id }),
+        });
+        assert.equal(response.status, 200);
+        await response.text();
+        assert.equal(inferenceCalls(f.state).at(-1).headers[header], value);
+      }
+      const card = await f.plugin.auth.usage(async () => current);
+      assert.equal(card.error, undefined);
+      assert.equal(card.signIn, "kept");
+      const call = f.state.calls.at(-1);
+      assert.equal(
+        call.path,
+        kind === "builder"
+          ? "/api/v1/management/subscription/detail"
+          : "/api/v1/management/payg/balance",
+      );
+      assert.equal(call.headers.authorization, `Bearer ${keys.management}`);
+    }
+    assert.equal(inferenceCalls(f.state).length, 4);
+    assert.equal(f.state.calls.length, 6, "rotating the management key must bypass its old cache");
+  });
+}
 
 test("honors cancellation before sending and while consuming a response stream", async (t) => {
   const f = await setup(t);
@@ -505,7 +591,7 @@ for (const kind of ["builder", "payg"]) {
     assert.equal(f.state.calls[0].headers.authorization, `Bearer ${KEYS.management}`);
     await f.plugin.auth.usage(async () => auth(kind));
     assert.equal(f.state.calls.length, 1);
-    await f.plugin.auth.usage(async () => auth(kind, "sk-mg-v1-second-fixture"));
+    await f.plugin.auth.usage(async () => auth(kind, ROTATED_KEYS.management));
     assert.equal(f.state.calls.length, 2);
   });
 
@@ -584,8 +670,8 @@ test("mixed-key usage keeps subscription and balance caches separate without bor
   const missing = await f.plugin.auth.usage(async () => auth("payg", ""));
   assert.match(missing.error, /Add a Management API Key/);
   assert.equal(f.state.calls.length, 2);
-  await f.plugin.auth.usage(async () => auth("payg", "sk-mg-v1-other-account"));
-  assert.equal(f.state.calls.at(-1).headers.authorization, "Bearer sk-mg-v1-other-account");
+  await f.plugin.auth.usage(async () => auth("payg", ROTATED_KEYS.management));
+  assert.equal(f.state.calls.at(-1).headers.authorization, `Bearer ${ROTATED_KEYS.management}`);
   assert.equal(f.state.calls.length, 3);
 });
 

@@ -2,11 +2,12 @@
 export const PROVIDER_ID = "zenmux";
 export const PROVIDER_NAME = "ZenMux";
 export const PLANS = Object.freeze({
-  builder: { name: `${PROVIDER_NAME} Builder Plan`, prefixes: ["sk-ss-v1-", "sk-subs-"] },
-  payg: { name: `${PROVIDER_NAME} Pay As You Go`, prefixes: ["sk-ai-v1-", "sk-payg-"] },
+  builder: { name: `${PROVIDER_NAME} Builder Plan`, prefix: "sk-subs-" },
+  payg: { name: `${PROVIDER_NAME} Pay As You Go`, prefix: "sk-payg-" },
 });
-export const INFERENCE_PREFIXES = [...PLANS.builder.prefixes, ...PLANS.payg.prefixes];
-export const MANAGEMENT_PREFIXES = ["sk-mg-v1-", "sk-mgmt-"];
+export const INFERENCE_PREFIXES = [PLANS.builder.prefix, PLANS.payg.prefix];
+export const MANAGEMENT_PREFIX = "sk-mgmt-";
+export const KEY_LENGTH = 164;
 export const KEY_SUFFIX_PATTERN = /^[A-Za-z0-9_-]+$/;
 
 // Upstream protocols and metadata endpoints.

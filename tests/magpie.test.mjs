@@ -58,7 +58,7 @@ const sseData = (text) =>
 
 for (const kind of ["builder", "payg"])
   test(
-    `${kind}: Magpie uses the unified zenmux prefix through native upstream APIs`,
+    `${kind}: Magpie saves and forwards 164-character keys through native upstream APIs`,
     {
       skip: process.env.MAGPIE_E2E !== "1",
       timeout: 120_000,
